@@ -1,7 +1,7 @@
 import { readdir, mkdir, readFile, writeFile, rm } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
-import { execFileSync } from "child_process";
+import { execFileSync, execSync } from "child_process";
 
 const SOURCE_DIR = "/mnt/c/Users/yagasaki/Downloads/Berserk-20260916T020158Z-1-001/Berserk";
 const TARGET_DIR = "/home/yagasaki/ubuntu@dev/mangalivre/Berserk";
@@ -47,6 +47,7 @@ async function main() {
     for (const vol of volumes) {
         try {
             await processVolume(vol.number, join(SOURCE_DIR, vol.name));
+            await commitAndPush(vol.number);
             processados++;
         } catch (err) {
             falhas++;
@@ -114,6 +115,26 @@ async function processVolume(volumeNumber: number, pdfPath: string) {
         console.log(`   ✅ ${files.length} páginas exportadas para ${volumeFolder}`);
     } finally {
         await rm(tmpDir, { recursive: true, force: true });
+    }
+}
+
+async function commitAndPush(volumeNumber: number) {
+    console.log(`   📦 Commitando Volume ${volumeNumber}...`);
+
+    try {
+        execSync("git add .", { cwd: TARGET_DIR, stdio: "pipe" });
+        execSync(`git commit -am "Update: Berserk Vol.${volumeNumber}"`, {
+            cwd: TARGET_DIR,
+            stdio: "pipe",
+        });
+        execSync("git push", { cwd: TARGET_DIR, stdio: "pipe" });
+
+        console.log(`   ✅ Volume ${volumeNumber} commitado e enviado.`);
+    } catch (err) {
+        throw new Error(
+            `Falha ao commitar/enviar o volume ${volumeNumber}. ` +
+            `Erro original: ${(err as Error).message}`
+        );
     }
 }
 
