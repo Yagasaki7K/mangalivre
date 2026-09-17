@@ -3,12 +3,9 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { execFileSync, execSync } from "child_process";
 
-const SOURCE_DIR = "/mnt/c/Users/yagasaki/Downloads/Berserk-20260916T020158Z-1-001/Berserk";
-const TARGET_DIR = "/home/yagasaki/ubuntu@dev/mangalivre/Berserk";
+const SOURCE_DIR = "/mnt/c/Users/yagasaki/Downloads/4 - Absolute Batman-20260911T193158Z-1-001/4 - Absolute Batman";
+const TARGET_DIR = "/home/yagasaki/ubuntu@dev/mangalivre/Absolute Batman";
 const GIT_ROOT = "/home/yagasaki/ubuntu@dev/mangalivre";
-const MANGA_NAME = "Berserk";
-
-const volumeRegex = /^BERSERK VOL\.?\s*(\d+)\.pdf$/i;
 
 async function folderExists(path: string): Promise<boolean> {
     try {
@@ -17,6 +14,57 @@ async function folderExists(path: string): Promise<boolean> {
     } catch {
         return false;
     }
+}
+
+function slugify(text: string): string {
+    return text
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+}
+
+interface ParsedPdf {
+    fileName: string;
+    volumeLabel: string;
+}
+
+function parsePdfName(fileName: string): ParsedPdf | null {
+    const base = fileName.replace(/\.pdf$/i, "").trim();
+
+    // Padrão: "Absolute Batman SPECIAL_ ARK-M #15 (darkseid club)"
+    const specialMatch = base.match(/^Absolute Batman\s+SPECIAL[_\s]+([A-Za-z\-]+)\s*#(\d+)/i);
+    if (specialMatch) {
+        const name = (specialMatch[1] ?? "").toUpperCase().replace(/_/g, " ");
+        const num = specialMatch[2] ?? "";
+        return {
+            fileName,
+            volumeLabel: `Absolute Batman Special ${name} Vol.${num}`,
+        };
+    }
+
+    // Padrão: "Anual 1 - Absolute Batman #1 (darkseid club)"
+    const anualMatch = base.match(/^Anual\s+(\d+)\s*-\s*Absolute Batman\s*#(\d+)/i);
+    if (anualMatch) {
+        const num = anualMatch[1] ?? "";
+        return {
+            fileName,
+            volumeLabel: `Absolute Batman Anual Vol.${num}`,
+        };
+    }
+
+    // Padrão: "Absolute Batman #13 (darkseid club)"
+    const normalMatch = base.match(/^Absolute Batman\s*#(\d+)/i);
+    if (normalMatch) {
+        const num = normalMatch[1] ?? "";
+        return {
+            fileName,
+            volumeLabel: `Absolute Batman Vol.${num}`,
+        };
+    }
+
+    return null;
 }
 
 async function main() {
@@ -34,69 +82,61 @@ async function main() {
         process.exit(1);
     }
 
-    const volumes = entries
-        .map((name) => {
-            const match = name.match(volumeRegex);
-            if (!match) return null;
-            const number = Number.parseInt(match[1] ?? "", 10);
-            if (Number.isNaN(number)) return null;
-            return { name, number };
-        })
-        .filter((v): v is { name: string; number: number } => v !== null)
-        .sort((a, b) => a.number - b.number);
+    const parsed = entries
+        .map((name) => parsePdfName(name))
+        .filter((p): p is ParsedPdf => p !== null);
 
-    if (volumes.length === 0) {
-        console.log("⚠️  Nenhum PDF de volume encontrado.");
+    if (parsed.length === 0) {
+        console.log("⚠️  Nenhum PDF válido encontrado.");
         return;
     }
 
-    console.log(`📚 ${volumes.length} volumes encontrados\n`);
+    parsed.sort((a, b) => a.volumeLabel.localeCompare(b.volumeLabel, "pt-BR", { numeric: true }));
+
+    console.log(`📚 ${parsed.length} PDFs encontrados\n`);
 
     let processados = 0;
     let ignorados = 0;
     let falhas = 0;
 
-    for (const vol of volumes) {
-        const volumeFolder = `Volume ${vol.number}`;
-        const destPath = join(TARGET_DIR, volumeFolder);
+    for (const item of parsed) {
+        const destPath = join(TARGET_DIR, item.volumeLabel);
 
         if (await folderExists(destPath)) {
-            console.log(`⏭️  Volume ${vol.number} já existe, ignorando.`);
+            console.log(`⏭️  ${item.volumeLabel} já existe, ignorando.`);
             ignorados++;
             continue;
         }
 
         try {
-            await processVolume(vol.number, join(SOURCE_DIR, vol.name));
-            await commitAndPush(vol.number);
+            await processVolume(item.volumeLabel, join(SOURCE_DIR, item.fileName));
+            await commitAndPush(item.volumeLabel);
             processados++;
         } catch (err) {
             falhas++;
-            console.error(`❌ Erro no volume ${vol.number}:`, err);
+            console.error(`❌ Erro em ${item.volumeLabel}:`, err);
         }
     }
 
     console.log(`\n✅ Processamento concluído!`);
-    console.log(`   Volumes processados: ${processados}`);
-    console.log(`   Volumes ignorados:   ${ignorados}`);
-    console.log(`   Volumes com falha:   ${falhas}`);
+    console.log(`   Processados: ${processados}`);
+    console.log(`   Ignorados:   ${ignorados}`);
+    console.log(`   Falhas:      ${falhas}`);
 
     if (falhas > 0) {
         process.exit(1);
     }
 }
 
-async function processVolume(volumeNumber: number, pdfPath: string) {
-    const volumeFolder = `Volume ${volumeNumber}`;
-    const destPath = join(TARGET_DIR, volumeFolder);
+async function processVolume(volumeLabel: string, pdfPath: string) {
+    const destPath = join(TARGET_DIR, volumeLabel);
 
-    console.log(`📖 Processando Volume ${volumeNumber}`);
+    console.log(`📖 Processando: ${volumeLabel}`);
 
     await mkdir(destPath, { recursive: true });
 
-    const prefix = `${MANGA_NAME.toUpperCase()} VOL.${String(volumeNumber).padStart(2, "0")}`;
-
-    const tmpDir = join(tmpdir(), `mangalivre-${Date.now()}-${volumeNumber}`);
+    const prefix = volumeLabel;
+    const tmpDir = join(tmpdir(), `mangalivre-${Date.now()}-${slugify(volumeLabel)}`);
     await mkdir(tmpDir, { recursive: true });
 
     try {
@@ -112,7 +152,7 @@ async function processVolume(volumeNumber: number, pdfPath: string) {
             ], { stdio: "pipe" });
         } catch (err) {
             throw new Error(
-                `pdftoppm falhou no volume ${volumeNumber}. ` +
+                `pdftoppm falhou em "${volumeLabel}". ` +
                 `Verifique se o poppler-utils está instalado (sudo apt install poppler-utils). ` +
                 `Erro original: ${(err as Error).message}`
             );
@@ -123,7 +163,7 @@ async function processVolume(volumeNumber: number, pdfPath: string) {
             .sort();
 
         if (files.length === 0) {
-            throw new Error(`Nenhuma imagem gerada para o volume ${volumeNumber}.`);
+            throw new Error(`Nenhuma imagem gerada para "${volumeLabel}".`);
         }
 
         let pageNumber = 1;
@@ -134,27 +174,27 @@ async function processVolume(volumeNumber: number, pdfPath: string) {
             pageNumber++;
         }
 
-        console.log(`   ✅ ${files.length} páginas exportadas para ${volumeFolder}`);
+        console.log(`   ✅ ${files.length} páginas exportadas para "${volumeLabel}"`);
     } finally {
         await rm(tmpDir, { recursive: true, force: true });
     }
 }
 
-async function commitAndPush(volumeNumber: number) {
-    console.log(`   📦 Commitando Volume ${volumeNumber}...`);
+async function commitAndPush(volumeLabel: string) {
+    console.log(`   📦 Commitando "${volumeLabel}"...`);
 
     try {
         execSync("git add .", { cwd: GIT_ROOT, stdio: "pipe" });
-        execSync(`git commit -am "Update: Berserk Vol.${volumeNumber}"`, {
+        execSync(`git commit -am "Update: ${volumeLabel}"`, {
             cwd: GIT_ROOT,
             stdio: "pipe",
         });
         execSync("git push", { cwd: GIT_ROOT, stdio: "pipe" });
 
-        console.log(`   ✅ Volume ${volumeNumber} commitado e enviado.`);
+        console.log(`   ✅ "${volumeLabel}" commitado e enviado.`);
     } catch (err) {
         throw new Error(
-            `Falha ao commitar/enviar o volume ${volumeNumber}. ` +
+            `Falha ao commitar/enviar "${volumeLabel}". ` +
             `Erro original: ${(err as Error).message}`
         );
     }
