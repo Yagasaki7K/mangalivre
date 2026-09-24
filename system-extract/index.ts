@@ -3,9 +3,72 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { execSync, spawn } from "child_process";
 
-const SOURCE_DIR = "/mnt/d/Desktop/Mangas/Death Note";
-const TARGET_DIR = "/home/yagasaki/ubuntu@dev/mangalivre/Death Note";
+const SOURCE_ROOT = "/mnt/d/Desktop/Mangas";
+const TARGET_ROOT = "/home/yagasaki/ubuntu@dev/mangalivre";
 const GIT_ROOT = "/home/yagasaki/ubuntu@dev/mangalivre";
+
+const FOLDERS = [
+    {
+        folder: "Chainsaw Man",
+        targetFolder: "Chainsaw Man",
+        regex: /^Chainsaw Man\s*-\s*Volume\s*(\d+)$/i,
+        label: (n: number) => `Chainsaw Man Vol.${n}`,
+    },
+    {
+        folder: "Demon Slayer – Kimetsu no Yaiba",
+        targetFolder: "Demon Slayer",
+        regex: /^Demon Slayer\s*-\s*(\d+)$/i,
+        label: (n: number) => `Demon Slayer Vol.${n}`,
+    },
+    {
+        folder: "FRIEREN",
+        targetFolder: "Frieren",
+        regex: /^FRIEREN\s+VOL\.?\s*(\d+)$/i,
+        label: (n: number) => `Frieren Vol.${n}`,
+    },
+    {
+        folder: "Hell’s Paradise",
+        targetFolder: "Hells Paradise",
+        regex: /^Hells\s+Paradise\s+Vol\.?\s*(\d+)$/i,
+        label: (n: number) => `Hells Paradise Vol.${n}`,
+    },
+    {
+        folder: "HUNTER X HUNTER",
+        targetFolder: "Hunter x Hunter",
+        regex: /^Hunter\s*x\s*Hunter\s*-\s*Volume\s*(\d+)$/i,
+        label: (n: number) => `Hunter x Hunter Vol.${n}`,
+    },
+    {
+        folder: "NARUTO",
+        targetFolder: "Naruto",
+        regex: /^Naruto\s*-\s*Volume\s*(\d+)$/i,
+        label: (n: number) => `Naruto Vol.${n}`,
+    },
+    {
+        folder: "Neon Genesis Evangelion - Collectors Edition",
+        targetFolder: "Neon Genesis Evangelion - Collectors Edition",
+        regex: /^Neon Genesis Evangelion\s*-\s*Collectors Edition\s*-\s*Vol\.?\s*(\d+)$/i,
+        label: (n: number) => `Neon Genesis Evangelion - Collectors Edition Vol.${n}`,
+    },
+    {
+        folder: "Soul Eater",
+        targetFolder: "Soul Eater",
+        regex: /^Soul Eater\s*-\s*Volume\s*(\d+)$/i,
+        label: (n: number) => `Soul Eater Vol.${n}`,
+    },
+    {
+        folder: "Tokyo Ghoul",
+        targetFolder: "Tokyo Ghoul",
+        regex: /^Tokyo Ghoul\s*-\s*Volume\s*(\d+)$/i,
+        label: (n: number) => `Tokyo Ghoul Vol.${n}`,
+    },
+    {
+        folder: "Tokyo Ghoul RE",
+        targetFolder: "Tokyo Ghoul RE",
+        regex: /^Tokyo Ghoul RE\s*-\s*Vol\.?\s*(\d+)$/i,
+        label: (n: number) => `Tokyo Ghoul RE Vol.${n}`,
+    },
+];
 
 async function folderExists(path: string): Promise<boolean> {
     try {
@@ -28,36 +91,7 @@ function slugify(text: string): string {
 interface ParsedPdf {
     fileName: string;
     volumeLabel: string;
-}
-
-function parsePdfName(fileName: string): ParsedPdf | null {
-    const base = fileName.replace(/\.pdf$/i, "").trim();
-
-    const oneShotMatch = base.match(
-        /^Death Note\s*-\s*([A-Za-z\-]+)\s*\[One Shot\]$/i,
-    );
-
-    if (oneShotMatch) {
-        const name = (oneShotMatch[1] ?? "").trim();
-        return {
-            fileName,
-            volumeLabel: `Death Note - ${name} [One Shot]`,
-        };
-    }
-
-    const volumeMatch = base.match(
-        /^Death Note\s*-\s*Volume\s*(\d+)$/i,
-    );
-
-    if (volumeMatch) {
-        const num = Number.parseInt(volumeMatch[1] ?? "0", 10);
-        return {
-            fileName,
-            volumeLabel: `Death Note Vol.${num}`,
-        };
-    }
-
-    return null;
+    order: number;
 }
 
 function renderProgress(current: number, total: number, label: string) {
@@ -88,56 +122,88 @@ function countPngFiles(dir: string): number {
 
 async function main() {
     console.log("🚀 Iniciando processamento...");
-    console.log("📂 Origem: ", SOURCE_DIR);
-    console.log("📂 Destino:", TARGET_DIR);
+    console.log("📂 Origem: ", SOURCE_ROOT);
+    console.log("📂 Destino:", TARGET_ROOT);
     console.log("📂 Git root:", GIT_ROOT);
     console.log();
-
-    let entries: string[] = [];
-    try {
-        entries = await readdir(SOURCE_DIR);
-    } catch (err) {
-        console.error("❌ Não foi possível ler a pasta de origem:", err);
-        process.exit(1);
-    }
-
-    const parsed = entries
-        .map((name) => parsePdfName(name))
-        .filter((p): p is ParsedPdf => p !== null)
-        .sort((a, b) =>
-            a.volumeLabel.localeCompare(b.volumeLabel, "pt-BR", { numeric: true }),
-        );
-
-    if (parsed.length === 0) {
-        console.log("⚠️  Nenhum PDF válido encontrado.");
-        return;
-    }
-
-    console.log(`📚 ${parsed.length} PDFs encontrados\n`);
 
     let processados = 0;
     let ignorados = 0;
     let falhas = 0;
 
-    for (const item of parsed) {
-        const destPath = join(TARGET_DIR, item.volumeLabel);
+    for (const config of FOLDERS) {
+        const sourceDir = join(SOURCE_ROOT, config.folder);
+        const targetDir = join(TARGET_ROOT, config.targetFolder);
 
-        if (await folderExists(destPath)) {
-            console.log(`⏭️  ${item.volumeLabel} já existe, ignorando.`);
-            ignorados++;
+        console.log(`\n📚 Processando pasta: ${config.folder}`);
+
+        if (!(await folderExists(sourceDir))) {
+            console.log(`⚠️  Pasta de origem não encontrada: ${sourceDir}`);
             continue;
         }
 
+        let entries: string[] = [];
         try {
-            await processVolume(
-                item.volumeLabel,
-                join(SOURCE_DIR, item.fileName),
-            );
-            await commitAndPush(item.volumeLabel);
-            processados++;
+            entries = await readdir(sourceDir);
         } catch (err) {
+            console.error(`❌ Não foi possível ler ${sourceDir}:`, err);
             falhas++;
-            console.error(`\n❌ Erro em ${item.volumeLabel}:`, err);
+            continue;
+        }
+
+        const parsed: ParsedPdf[] = [];
+
+        for (const name of entries) {
+            const base = name.replace(/\.pdf$/i, "").trim();
+            const match = base.match(config.regex);
+
+            if (!match) {
+                continue;
+            }
+
+            const num = Number.parseInt(match[1] ?? "0", 10);
+
+            if (Number.isNaN(num)) {
+                continue;
+            }
+
+            parsed.push({
+                fileName: name,
+                volumeLabel: config.label(num),
+                order: num,
+            });
+        }
+
+        if (parsed.length === 0) {
+            console.log(`⚠️  Nenhum PDF válido encontrado em ${config.folder}`);
+            continue;
+        }
+
+        parsed.sort((a, b) => a.order - b.order);
+
+        console.log(`   ${parsed.length} PDFs encontrados`);
+
+        for (const item of parsed) {
+            const destPath = join(targetDir, item.volumeLabel);
+
+            if (await folderExists(destPath)) {
+                console.log(`   ⏭️  ${item.volumeLabel} já existe, ignorando.`);
+                ignorados++;
+                continue;
+            }
+
+            try {
+                await processVolume(
+                    item.volumeLabel,
+                    join(sourceDir, item.fileName),
+                    targetDir,
+                );
+                await commitAndPush(item.volumeLabel);
+                processados++;
+            } catch (err) {
+                falhas++;
+                console.error(`\n   ❌ Erro em ${item.volumeLabel}:`, err);
+            }
         }
     }
 
@@ -151,10 +217,14 @@ async function main() {
     }
 }
 
-async function processVolume(volumeLabel: string, pdfPath: string) {
-    const destPath = join(TARGET_DIR, volumeLabel);
+async function processVolume(
+    volumeLabel: string,
+    pdfPath: string,
+    targetDir: string,
+) {
+    const destPath = join(targetDir, volumeLabel);
 
-    console.log(`\n📖 Processando: ${volumeLabel}`);
+    console.log(`\n   📖 Processando: ${volumeLabel}`);
 
     await mkdir(destPath, { recursive: true });
 
@@ -170,7 +240,7 @@ async function processVolume(volumeLabel: string, pdfPath: string) {
 
         const totalPages = await getPdfPageCount(pdfPath);
 
-        console.log(`   Total de páginas detectado: ${totalPages}`);
+        console.log(`      Total de páginas detectado: ${totalPages}`);
 
         const args = ["-png", "-r", "150", pdfPath, outputBase];
 
@@ -222,7 +292,7 @@ async function processVolume(volumeLabel: string, pdfPath: string) {
         }
 
         console.log(
-            `   ✅ ${files.length} páginas convertidas e salvas para "${volumeLabel}"`,
+            `      ✅ ${files.length} páginas convertidas e salvas para "${volumeLabel}"`,
         );
     } finally {
         await rm(tmpDir, { recursive: true, force: true });
@@ -242,7 +312,7 @@ async function getPdfPageCount(pdfPath: string): Promise<number> {
 }
 
 async function commitAndPush(volumeLabel: string) {
-    console.log(`   📦 Commitando "${volumeLabel}"...`);
+    console.log(`      📦 Commitando "${volumeLabel}"...`);
 
     try {
         execSync("git add .", { cwd: GIT_ROOT, stdio: "inherit" });
@@ -252,7 +322,7 @@ async function commitAndPush(volumeLabel: string) {
         });
         execSync("git push", { cwd: GIT_ROOT, stdio: "inherit" });
 
-        console.log(`   ✅ "${volumeLabel}" commitado e enviado.`);
+        console.log(`      ✅ "${volumeLabel}" commitado e enviado.`);
     } catch (err) {
         throw new Error(
             `Falha ao commitar/enviar "${volumeLabel}". ` +
