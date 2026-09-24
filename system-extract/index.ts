@@ -1,7 +1,7 @@
 import { readdir, mkdir, readFile, writeFile, rm, stat } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
-import { execFileSync, execSync } from "child_process";
+import { execFileSync, execSync, spawn } from "child_process";
 
 const SOURCE_DIR = "/mnt/d/Desktop/Mangas/BOA NOITE PUNPUN";
 const TARGET_DIR = "/home/yagasaki/ubuntu@dev/mangalivre/Boa Noite Punpun";
@@ -32,19 +32,42 @@ interface ParsedPdf {
 
 function parsePdfName(fileName: string): ParsedPdf | null {
     const base = fileName.replace(/\.pdf$/i, "").trim();
-
     const match = base.match(/^Boa Noite Punpun Vol\.?\s*(\d+)$/i);
 
     if (!match) {
         return null;
     }
 
-    const num = match[1] ?? "";
-
     return {
         fileName,
-        volumeLabel: `Boa Noite Punpun Vol.${num}`,
+        volumeLabel: `Boa Noite Punpun Vol.${match[1] ?? ""}`,
     };
+}
+
+function renderProgress(current: number, total: number, label: string) {
+    const percent = total > 0 ? Math.round((current / total) * 100) : 0;
+    const barLength = 30;
+    const filled = Math.round((percent / 100) * barLength);
+    const empty = barLength - filled;
+    const bar = "█".repeat(filled) + "░".repeat(empty);
+
+    const line = `\r   📄 ${label} | ${current}/${total} | ${bar} ${percent}%`;
+    process.stdout.write(line.padEnd(120, " "));
+}
+
+function finishProgress() {
+    process.stdout.write("\n");
+}
+
+function countPngFiles(dir: string): number {
+    try {
+        const result = execSync(`ls "${dir}" | grep -c '\\.png$' || true`, {
+            encoding: "utf-8",
+        });
+        return Number.parseInt(result.trim(), 10) || 0;
+    } catch {
+        return 0;
+    }
 }
 
 async function main() {
@@ -64,16 +87,15 @@ async function main() {
 
     const parsed = entries
         .map((name) => parsePdfName(name))
-        .filter((p): p is ParsedPdf => p !== null);
+        .filter((p): p is ParsedPdf => p !== null)
+        .sort((a, b) =>
+            a.volumeLabel.localeCompare(b.volumeLabel, "pt-BR", { numeric: true }),
+        );
 
     if (parsed.length === 0) {
         console.log("⚠️  Nenhum PDF válido encontrado.");
         return;
     }
-
-    parsed.sort((a, b) =>
-        a.volumeLabel.localeCompare(b.volumeLabel, "pt-BR", { numeric: true }),
-    );
 
     console.log(`📚 ${parsed.length} PDFs encontrados\n`);
 
@@ -99,7 +121,7 @@ async function main() {
             processados++;
         } catch (err) {
             falhas++;
-            console.error(`❌ Erro em ${item.volumeLabel}:`, err);
+            console.error(`\n❌ Erro em ${item.volumeLabel}:`, err);
         }
     }
 
@@ -116,7 +138,7 @@ async function main() {
 async function processVolume(volumeLabel: string, pdfPath: string) {
     const destPath = join(TARGET_DIR, volumeLabel);
 
-    console.log(`📖 Processando: ${volumeLabel}`);
+    console.log(`\n📖 Processando: ${volumeLabel}`);
 
     await mkdir(destPath, { recursive: true });
 
@@ -130,19 +152,42 @@ async function processVolume(volumeLabel: string, pdfPath: string) {
     try {
         const outputBase = join(tmpDir, "page");
 
-        try {
-            execFileSync(
-                "pdftoppm",
-                ["-png", "-r", "150", pdfPath, outputBase],
-                { stdio: "pipe" },
-            );
-        } catch (err) {
-            throw new Error(
-                `pdftoppm falhou em "${volumeLabel}". ` +
-                `Verifique se o poppler-utils está instalado (sudo apt install poppler-utils). ` +
-                `Erro original: ${(err as Error).message}`,
-            );
-        }
+        const totalPages = await getPdfPageCount(pdfPath);
+
+        console.log(`   Total de páginas detectado: ${totalPages}`);
+
+        const args = ["-png", "-r", "150", pdfPath, outputBase];
+
+        await new Promise<void>((resolve, reject) => {
+            const child = spawn("pdftoppm", args, { stdio: "pipe" });
+
+            child.on("error", (err) => {
+                reject(
+                    new Error(
+                        `pdftoppm falhou em "${volumeLabel}". ` +
+                        `Verifique se o poppler-utils está instalado (sudo apt install poppler-utils). ` +
+                        `Erro original: ${err.message}`,
+                    ),
+                );
+            });
+
+            child.on("close", (code) => {
+                if (code === 0) {
+                    resolve();
+                } else {
+                    reject(new Error(`pdftoppm saiu com código ${code}`));
+                }
+            });
+
+            const interval = setInterval(() => {
+                const current = countPngFiles(tmpDir);
+                renderProgress(current, totalPages, volumeLabel);
+            }, 200);
+
+            child.on("close", () => clearInterval(interval));
+        });
+
+        finishProgress();
 
         const files = (await readdir(tmpDir))
             .filter((f) => f.toLowerCase().endsWith(".png"))
@@ -152,19 +197,23 @@ async function processVolume(volumeLabel: string, pdfPath: string) {
             throw new Error(`Nenhuma imagem gerada para "${volumeLabel}".`);
         }
 
-        let pageNumber = 1;
-        for (const file of files) {
-            const newName = `${prefix}-${String(pageNumber).padStart(3, "0")}.png`;
-            const data = await readFile(join(tmpDir, file));
-            await writeFile(join(destPath, newName), data);
-            pageNumber++;
-        }
-
         console.log(
-            `   ✅ ${files.length} páginas exportadas para "${volumeLabel}"`,
+            `   ✅ ${files.length} páginas convertidas para "${volumeLabel}"`,
         );
     } finally {
         await rm(tmpDir, { recursive: true, force: true });
+    }
+}
+
+async function getPdfPageCount(pdfPath: string): Promise<number> {
+    try {
+        const result = execSync(`pdfinfo "${pdfPath}" | grep Pages`, {
+            encoding: "utf-8",
+        });
+        const match = result.match(/Pages:\s+(\d+)/);
+        return match ? Number.parseInt(match[1] ?? "0", 10) : 0;
+    } catch {
+        return 0;
     }
 }
 
@@ -189,6 +238,6 @@ async function commitAndPush(volumeLabel: string) {
 }
 
 main().catch((err) => {
-    console.error("💥 Erro fatal:", err);
+    console.error("\n💥 Erro fatal:", err);
     process.exit(1);
 });
