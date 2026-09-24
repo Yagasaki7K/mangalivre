@@ -3,8 +3,8 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { execFileSync, execSync } from "child_process";
 
-const SOURCE_DIR = "/mnt/c/Users/yagasaki/Downloads/4 - Absolute Batman-20260911T193158Z-1-001/4 - Absolute Batman";
-const TARGET_DIR = "/home/yagasaki/ubuntu@dev/mangalivre/Absolute Batman";
+const SOURCE_DIR = "/mnt/d/Desktop/Mangas/BOA NOITE PUNPUN";
+const TARGET_DIR = "/home/yagasaki/ubuntu@dev/mangalivre/Boa Noite Punpun";
 const GIT_ROOT = "/home/yagasaki/ubuntu@dev/mangalivre";
 
 async function folderExists(path: string): Promise<boolean> {
@@ -33,38 +33,18 @@ interface ParsedPdf {
 function parsePdfName(fileName: string): ParsedPdf | null {
     const base = fileName.replace(/\.pdf$/i, "").trim();
 
-    // Padrão: "Absolute Batman SPECIAL_ ARK-M #15 (darkseid club)"
-    const specialMatch = base.match(/^Absolute Batman\s+SPECIAL[_\s]+([A-Za-z\-]+)\s*#(\d+)/i);
-    if (specialMatch) {
-        const name = (specialMatch[1] ?? "").toUpperCase().replace(/_/g, " ");
-        const num = specialMatch[2] ?? "";
-        return {
-            fileName,
-            volumeLabel: `Absolute Batman Special ${name} Vol.${num}`,
-        };
+    const match = base.match(/^Boa Noite Punpun Vol\.?\s*(\d+)$/i);
+
+    if (!match) {
+        return null;
     }
 
-    // Padrão: "Anual 1 - Absolute Batman #1 (darkseid club)"
-    const anualMatch = base.match(/^Anual\s+(\d+)\s*-\s*Absolute Batman\s*#(\d+)/i);
-    if (anualMatch) {
-        const num = anualMatch[1] ?? "";
-        return {
-            fileName,
-            volumeLabel: `Absolute Batman Anual Vol.${num}`,
-        };
-    }
+    const num = match[1] ?? "";
 
-    // Padrão: "Absolute Batman #13 (darkseid club)"
-    const normalMatch = base.match(/^Absolute Batman\s*#(\d+)/i);
-    if (normalMatch) {
-        const num = normalMatch[1] ?? "";
-        return {
-            fileName,
-            volumeLabel: `Absolute Batman Vol.${num}`,
-        };
-    }
-
-    return null;
+    return {
+        fileName,
+        volumeLabel: `Boa Noite Punpun Vol.${num}`,
+    };
 }
 
 async function main() {
@@ -91,7 +71,9 @@ async function main() {
         return;
     }
 
-    parsed.sort((a, b) => a.volumeLabel.localeCompare(b.volumeLabel, "pt-BR", { numeric: true }));
+    parsed.sort((a, b) =>
+        a.volumeLabel.localeCompare(b.volumeLabel, "pt-BR", { numeric: true }),
+    );
 
     console.log(`📚 ${parsed.length} PDFs encontrados\n`);
 
@@ -109,7 +91,10 @@ async function main() {
         }
 
         try {
-            await processVolume(item.volumeLabel, join(SOURCE_DIR, item.fileName));
+            await processVolume(
+                item.volumeLabel,
+                join(SOURCE_DIR, item.fileName),
+            );
             await commitAndPush(item.volumeLabel);
             processados++;
         } catch (err) {
@@ -136,25 +121,26 @@ async function processVolume(volumeLabel: string, pdfPath: string) {
     await mkdir(destPath, { recursive: true });
 
     const prefix = volumeLabel;
-    const tmpDir = join(tmpdir(), `mangalivre-${Date.now()}-${slugify(volumeLabel)}`);
+    const tmpDir = join(
+        tmpdir(),
+        `mangalivre-${Date.now()}-${slugify(volumeLabel)}`,
+    );
     await mkdir(tmpDir, { recursive: true });
 
     try {
         const outputBase = join(tmpDir, "page");
 
         try {
-            execFileSync("pdftoppm", [
-                "-png",
-                "-r",
-                "150",
-                pdfPath,
-                outputBase,
-            ], { stdio: "pipe" });
+            execFileSync(
+                "pdftoppm",
+                ["-png", "-r", "150", pdfPath, outputBase],
+                { stdio: "pipe" },
+            );
         } catch (err) {
             throw new Error(
                 `pdftoppm falhou em "${volumeLabel}". ` +
                 `Verifique se o poppler-utils está instalado (sudo apt install poppler-utils). ` +
-                `Erro original: ${(err as Error).message}`
+                `Erro original: ${(err as Error).message}`,
             );
         }
 
@@ -174,7 +160,9 @@ async function processVolume(volumeLabel: string, pdfPath: string) {
             pageNumber++;
         }
 
-        console.log(`   ✅ ${files.length} páginas exportadas para "${volumeLabel}"`);
+        console.log(
+            `   ✅ ${files.length} páginas exportadas para "${volumeLabel}"`,
+        );
     } finally {
         await rm(tmpDir, { recursive: true, force: true });
     }
@@ -195,7 +183,7 @@ async function commitAndPush(volumeLabel: string) {
     } catch (err) {
         throw new Error(
             `Falha ao commitar/enviar "${volumeLabel}". ` +
-            `Erro original: ${(err as Error).message}`
+            `Erro original: ${(err as Error).message}`,
         );
     }
 }
