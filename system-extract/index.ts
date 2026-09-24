@@ -197,8 +197,16 @@ async function processVolume(volumeLabel: string, pdfPath: string) {
             throw new Error(`Nenhuma imagem gerada para "${volumeLabel}".`);
         }
 
+        let pageNumber = 1;
+        for (const file of files) {
+            const newName = `${prefix}-${String(pageNumber).padStart(3, "0")}.png`;
+            const data = await readFile(join(tmpDir, file));
+            await writeFile(join(destPath, newName), data);
+            pageNumber++;
+        }
+
         console.log(
-            `   ✅ ${files.length} páginas convertidas para "${volumeLabel}"`,
+            `   ✅ ${files.length} páginas convertidas e salvas para "${volumeLabel}"`,
         );
     } finally {
         await rm(tmpDir, { recursive: true, force: true });
@@ -221,12 +229,12 @@ async function commitAndPush(volumeLabel: string) {
     console.log(`   📦 Commitando "${volumeLabel}"...`);
 
     try {
-        execSync("git add .", { cwd: GIT_ROOT, stdio: "pipe" });
-        execSync(`git commit -am "Update: ${volumeLabel}"`, {
+        execSync("git add .", { cwd: GIT_ROOT, stdio: "inherit" });
+        execSync(`git commit -m "Update: ${volumeLabel}"`, {
             cwd: GIT_ROOT,
-            stdio: "pipe",
+            stdio: "inherit",
         });
-        execSync("git push", { cwd: GIT_ROOT, stdio: "pipe" });
+        execSync("git push", { cwd: GIT_ROOT, stdio: "inherit" });
 
         console.log(`   ✅ "${volumeLabel}" commitado e enviado.`);
     } catch (err) {
