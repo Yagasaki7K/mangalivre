@@ -1,10 +1,10 @@
 import { readdir, mkdir, readFile, writeFile, rm, stat } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
-import { execFileSync, execSync, spawn } from "child_process";
+import { execSync, spawn } from "child_process";
 
-const SOURCE_DIR = "/mnt/d/Desktop/Mangas/BOA NOITE PUNPUN";
-const TARGET_DIR = "/home/yagasaki/ubuntu@dev/mangalivre/Boa Noite Punpun";
+const SOURCE_DIR = "/mnt/d/Desktop/Mangas/Death Note";
+const TARGET_DIR = "/home/yagasaki/ubuntu@dev/mangalivre/Death Note";
 const GIT_ROOT = "/home/yagasaki/ubuntu@dev/mangalivre";
 
 async function folderExists(path: string): Promise<boolean> {
@@ -32,16 +32,32 @@ interface ParsedPdf {
 
 function parsePdfName(fileName: string): ParsedPdf | null {
     const base = fileName.replace(/\.pdf$/i, "").trim();
-    const match = base.match(/^Boa Noite Punpun Vol\.?\s*(\d+)$/i);
 
-    if (!match) {
-        return null;
+    const oneShotMatch = base.match(
+        /^Death Note\s*-\s*([A-Za-z\-]+)\s*\[One Shot\]$/i,
+    );
+
+    if (oneShotMatch) {
+        const name = (oneShotMatch[1] ?? "").trim();
+        return {
+            fileName,
+            volumeLabel: `Death Note - ${name} [One Shot]`,
+        };
     }
 
-    return {
-        fileName,
-        volumeLabel: `Boa Noite Punpun Vol.${match[1] ?? ""}`,
-    };
+    const volumeMatch = base.match(
+        /^Death Note\s*-\s*Volume\s*(\d+)$/i,
+    );
+
+    if (volumeMatch) {
+        const num = Number.parseInt(volumeMatch[1] ?? "0", 10);
+        return {
+            fileName,
+            volumeLabel: `Death Note Vol.${num}`,
+        };
+    }
+
+    return null;
 }
 
 function renderProgress(current: number, total: number, label: string) {
